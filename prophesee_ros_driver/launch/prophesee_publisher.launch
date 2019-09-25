@@ -2,6 +2,7 @@
 
   <node pkg="prophesee_ros_driver" type="prophesee_ros_publisher" name="prophesee_ros_publisher" respawn="false" output="screen">
     <param name="camera_name" value="camera" />
+    <param name="camera_serial" type="string" value="" />
     <param name="publish_cd" value="true" />
     <param name="publish_graylevels" value="false" />
     <param name="publish_imu" value="true" />

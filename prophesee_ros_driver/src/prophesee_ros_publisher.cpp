@@ -24,9 +24,11 @@ PropheseeWrapperPublisher::PropheseeWrapperPublisher():
     graylevel_rate_(30)
 {
     camera_name_ = "camera";
+    camera_serial_ = "";
 
     // Load Parameters
     nh_.getParam("camera_name", camera_name_);
+    nh_.getParam("camera_serial", camera_serial_);
     nh_.getParam("publish_cd", publish_cd_);
     nh_.getParam("publish_graylevels", publish_graylevels_);
     nh_.getParam("publish_imu", publish_imu_);
@@ -52,7 +54,7 @@ PropheseeWrapperPublisher::PropheseeWrapperPublisher():
 
     while (!openCamera()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
-        ROS_INFO("Trying to open camera...");
+        ROS_INFO("Trying to open camera %s...", camera_serial_.c_str());
     }
 
     // Set the maximum event rate, in kEv/s
@@ -88,9 +90,21 @@ PropheseeWrapperPublisher::~PropheseeWrapperPublisher() {
 bool PropheseeWrapperPublisher::openCamera() {
     bool camera_is_opened = false;
 
+    ROS_INFO("[CONF] Available cameras:");
+    for (auto &source : Prophesee::Camera::list_online_sources()) {
+        for (auto &serial : source.second) {
+            ROS_INFO("[CONF]\t%s", serial.c_str());
+        }
+    }
+
     // Initialize the camera instance
     try {
-        camera_ = Prophesee::Camera::from_first_available();
+        if (camera_serial_ == "") {
+            camera_ = Prophesee::Camera::from_first_available();
+        } else {
+            camera_ = Prophesee::Camera::from_serial(camera_serial_);
+        }
+
         if (!biases_file_.empty()) {
             ROS_INFO("[CONF] Loading bias file: %s", biases_file_.c_str());
             camera_.biases().set_from_file(biases_file_);

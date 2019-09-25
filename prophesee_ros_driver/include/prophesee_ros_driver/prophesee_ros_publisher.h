@@ -75,6 +75,9 @@ private:
     /// \brief Camera name in string format
     std::string camera_name_;
 
+    /// \brief Camera serial number, to open a specific camera
+    std::string camera_serial_;
+
     /// \brief Camera string time
     ros::Time start_timestamp_;
 
