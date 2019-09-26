@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+
+<launch>
+  <include file="$(find prophesee_ros_driver)/launch/viewer_middle.launch"/>
+  <include file="$(find prophesee_ros_driver)/launch/viewer_left.launch"/>
+  <include file="$(find prophesee_ros_driver)/launch/viewer_right.launch"/>
+</launch>
