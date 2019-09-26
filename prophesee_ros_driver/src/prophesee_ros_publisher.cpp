@@ -20,8 +20,10 @@
 PropheseeWrapperPublisher::PropheseeWrapperPublisher():
     nh_("~"),
     biases_file_(""),
-    max_event_rate_(6000),
-    graylevel_rate_(30)
+    max_event_rate_(0),
+    graylevel_rate_(30),
+    max_events(5000),
+    max_time(0.033)
 {
     camera_name_ = "camera";
     camera_serial_ = "";
@@ -35,22 +37,26 @@ PropheseeWrapperPublisher::PropheseeWrapperPublisher():
     nh_.getParam("bias_file", biases_file_);
     nh_.getParam("max_event_rate", max_event_rate_);
     nh_.getParam("graylevel_frame_rate", graylevel_rate_);
+    nh_.getParam("max_events_msg", max_events);
+    nh_.getParam("max_time_msg", max_time);
+
+    max_event_rate_ = 0;
 
     const std::string topic_cam_info = "/prophesee/" + camera_name_ + "/camera_info";
     const std::string topic_cd_event_buffer = "/prophesee/" + camera_name_ + "/cd_events_buffer";
     const std::string topic_gl_frame = "/prophesee/" + camera_name_ + "/graylevel_image";
     const std::string topic_imu_sensor = "/prophesee/" + camera_name_ + "/imu";
 
-    pub_info_ = nh_.advertise<sensor_msgs::CameraInfo>(topic_cam_info, 1);
+    pub_info_ = nh_.advertise<sensor_msgs::CameraInfo>(topic_cam_info, 0);
 
     if (publish_cd_)
-        pub_cd_events_ = nh_.advertise<prophesee_event_msgs::EventArray>(topic_cd_event_buffer, 500);
+        pub_cd_events_ = nh_.advertise<prophesee_event_msgs::EventArray>(topic_cd_event_buffer, 0);
 
     if (publish_graylevels_)
-        pub_gl_frame_ = nh_.advertise<cv_bridge::CvImage>(topic_gl_frame, 1);
+        pub_gl_frame_ = nh_.advertise<cv_bridge::CvImage>(topic_gl_frame, 0);
 
     if (publish_imu_)
-        pub_imu_events_ = nh_.advertise<sensor_msgs::Imu>(topic_imu_sensor, 100);
+        pub_imu_events_ = nh_.advertise<sensor_msgs::Imu>(topic_imu_sensor, 0);
 
     while (!openCamera()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -120,6 +126,7 @@ void PropheseeWrapperPublisher::startPublishing() {
     camera_.start();
     start_timestamp_ = ros::Time::now();
 
+    event_buffer_msg.events.reserve(2 * max_events);
     if (publish_cd_)
         publishCDEvents();
 
@@ -135,18 +142,38 @@ void PropheseeWrapperPublisher::startPublishing() {
         publishIMUEvents();
     }
 
-    ros::Rate loop_rate(5);
+    ros::Rate loop_rate(400);
     while(ros::ok()) {
         if (pub_info_.getNumSubscribers() > 0) {
             cam_info_msg_.header.stamp = ros::Time::now();
             pub_info_.publish(cam_info_msg_);
         }
+
+        if (pub_cd_events_.getNumSubscribers() > 0) {
+            mtx.lock();
+            event_buffer_msg_copy.events = event_buffer_msg.events;
+            event_buffer_msg.events.clear();
+            mtx.unlock();
+
+            // Sensor geometry in header of the message
+            event_buffer_msg_copy.height = camera_.geometry().height();
+            event_buffer_msg_copy.width  = camera_.geometry().width();
+
+            // Header Timestamp of the message
+            event_buffer_msg_copy.header.stamp = event_buffer_msg_copy.events[0].ts;
+
+            // Publish the message
+            pub_cd_events_.publish(event_buffer_msg_copy);
+            //ROS_INFO("--%llu", event_buffer_msg_copy.events.size());
+        }
+
         loop_rate.sleep();
     }
 }
 
 void PropheseeWrapperPublisher::publishCDEvents() {
     // Initialize and publish a buffer of CD events
+
     try {
         Prophesee::CallbackId cd_callback = camera_.cd().add_callback(
             [this](const Prophesee::EventCD *ev_begin, const Prophesee::EventCD *ev_end) {
@@ -154,21 +181,20 @@ void PropheseeWrapperPublisher::publishCDEvents() {
                 if (pub_cd_events_.getNumSubscribers() <= 0)
                     return;
 
+                mtx.lock();
                 if (ev_begin < ev_end) {
+                    auto packet_ts_first = ros::Time().fromNSec(start_timestamp_.toNSec() + (ev_begin->t * 1000.00));
+                    if (event_buffer_msg.events.size() > 0 && std::fabs(event_buffer_msg.events.back().ts.toSec() - packet_ts_first.toSec()) > 0.01) {
+                        ROS_WARN("Possible packet loss: %f to %f", event_buffer_msg.events.back().ts.toSec(), packet_ts_first.toSec());
+                    }
+
                     // Define the message for a buffer of CD events
-                    prophesee_event_msgs::EventArray event_buffer_msg;
                     const unsigned int buffer_size = ev_end - ev_begin;
-                    event_buffer_msg.events.resize(buffer_size);
-
-                    // Header Timestamp of the message
-                    event_buffer_msg.header.stamp.fromNSec(start_timestamp_.toNSec() + (ev_begin->t * 1000.00));
-
-                    // Sensor geometry in header of the message
-                    event_buffer_msg.height = camera_.geometry().height();
-                    event_buffer_msg.width = camera_.geometry().width();
+                    auto last_size = event_buffer_msg.events.size();
+                    event_buffer_msg.events.resize(event_buffer_msg.events.size() + buffer_size);
 
                     // Add events to the message
-                    auto buffer_it = event_buffer_msg.events.begin();
+                    auto buffer_it = event_buffer_msg.events.begin() + last_size;
                     for (const Prophesee::EventCD *it = ev_begin; it != ev_end; ++it, ++buffer_it) {
                         prophesee_event_msgs::Event &event = *buffer_it;
                         event.x = it->x;
@@ -176,12 +202,29 @@ void PropheseeWrapperPublisher::publishCDEvents() {
                         event.polarity = it->p;
                         event.ts.fromNSec(start_timestamp_.toNSec() + (it->t * 1000.00));
                     }
+                }
+                mtx.unlock();
+/*
+                auto current_ts = event_buffer_msg.events.back().ts.toSec();
+                if (event_buffer_msg.events.size() > max_events || current_ts - previous_ts > max_time) {
+                    previous_ts = current_ts;
+
+                    // Sensor geometry in header of the message
+                    event_buffer_msg.height = camera_.geometry().height();
+                    event_buffer_msg.width = camera_.geometry().width();
+
+                    // Header Timestamp of the message
+                    event_buffer_msg.header.stamp = event_buffer_msg.events[0].ts;
 
                     // Publish the message
                     pub_cd_events_.publish(event_buffer_msg);
 
-                    ROS_DEBUG("CD data available, buffer size: %d at time: %llu", buffer_size, ev_begin->t);
+                    ROS_DEBUG("CD data available, buffer size: %lu at time: %f",
+                               event_buffer_msg.events.size(), event_buffer_msg.events[0].ts.toSec());
+                    event_buffer_msg.events.clear();
                 }
+*/
+
             });
     } catch (Prophesee::CameraException &e) {
         ROS_WARN("%s", e.what());

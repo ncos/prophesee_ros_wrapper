@@ -10,6 +10,7 @@
 #include <sensor_msgs/CameraInfo.h>
 
 #include <prophesee_driver.h>
+#include <mutex>
 
 #include "log_tone_mapper.h"
 
@@ -93,10 +94,17 @@ private:
     /// \brief If showing gray-level frames
     bool publish_graylevels_;
 
-   /// \brief If showing IMU events
+    /// \brief If showing IMU events
     bool publish_imu_;
 
     static constexpr double GRAVITY = 9.81; /** Mean gravity value at Earth surface [m/s^2] **/
+
+    std::mutex mtx;
+    int max_events = 10000;
+    double max_time = 0.033;
+    double previous_ts = 0.0;
+    prophesee_event_msgs::EventArray event_buffer_msg;
+    prophesee_event_msgs::EventArray event_buffer_msg_copy;
 };
 
 #endif /* PROPHESEE_ROS_PUBLISHER_H_ */
