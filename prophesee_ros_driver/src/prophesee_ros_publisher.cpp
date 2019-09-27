@@ -20,7 +20,7 @@
 PropheseeWrapperPublisher::PropheseeWrapperPublisher():
     nh_("~"),
     biases_file_(""),
-    max_event_rate_(0),
+    max_event_rate_(6000),
     graylevel_rate_(30),
     max_events(5000),
     max_time(0.033)
@@ -39,8 +39,6 @@ PropheseeWrapperPublisher::PropheseeWrapperPublisher():
     nh_.getParam("graylevel_frame_rate", graylevel_rate_);
     nh_.getParam("max_events_msg", max_events);
     nh_.getParam("max_time_msg", max_time);
-
-    max_event_rate_ = 0;
 
     const std::string topic_cam_info = "/prophesee/" + camera_name_ + "/camera_info";
     const std::string topic_cd_event_buffer = "/prophesee/" + camera_name_ + "/cd_events_buffer";
@@ -142,18 +140,36 @@ void PropheseeWrapperPublisher::startPublishing() {
         publishIMUEvents();
     }
 
+    double last_ts = -1.0;
     ros::Rate loop_rate(400);
     while(ros::ok()) {
+        /*
         if (pub_info_.getNumSubscribers() > 0) {
             cam_info_msg_.header.stamp = ros::Time::now();
             pub_info_.publish(cam_info_msg_);
-        }
+        }*/
 
-        if (pub_cd_events_.getNumSubscribers() > 0) {
+        //if (pub_cd_events_.getNumSubscribers() > 0) 
+        {
             mtx.lock();
             event_buffer_msg_copy.events = event_buffer_msg.events;
             event_buffer_msg.events.clear();
             mtx.unlock();
+
+            auto ecount = event_buffer_msg_copy.events.size();
+            if (ecount == 0) {
+                //ROS_WARN("About to publish an empty event buffer!");
+                continue;
+            }
+
+            if (last_ts < 0 && ecount > 0) last_ts = (event_buffer_msg_copy.events.back().ts - start_timestamp_).toSec();
+            if (last_ts >= 0 && ecount > 0) {
+                auto ts = (event_buffer_msg_copy.events.front().ts - start_timestamp_).toSec();
+                if (std::fabs(ts - last_ts) > 0.01) {
+                    ROS_WARN("Possible packet loss (main loop): %f, %f, %f", last_ts, ts, std::fabs(ts - last_ts));
+                }
+                last_ts = (event_buffer_msg_copy.events.back().ts - start_timestamp_).toSec();
+            }
 
             // Sensor geometry in header of the message
             event_buffer_msg_copy.height = camera_.geometry().height();
@@ -178,14 +194,16 @@ void PropheseeWrapperPublisher::publishCDEvents() {
         Prophesee::CallbackId cd_callback = camera_.cd().add_callback(
             [this](const Prophesee::EventCD *ev_begin, const Prophesee::EventCD *ev_end) {
                 // Check the number of subscribers to the topic
-                if (pub_cd_events_.getNumSubscribers() <= 0)
-                    return;
+                //if (pub_cd_events_.getNumSubscribers() <= 0)
+                //    return;
 
                 mtx.lock();
                 if (ev_begin < ev_end) {
                     auto packet_ts_first = ros::Time().fromNSec(start_timestamp_.toNSec() + (ev_begin->t * 1000.00));
-                    if (event_buffer_msg.events.size() > 0 && std::fabs(event_buffer_msg.events.back().ts.toSec() - packet_ts_first.toSec()) > 0.01) {
-                        ROS_WARN("Possible packet loss: %f to %f", event_buffer_msg.events.back().ts.toSec(), packet_ts_first.toSec());
+                    if (event_buffer_msg.events.size() > 0 && std::fabs((event_buffer_msg.events.back().ts - packet_ts_first).toSec()) > 0.01) {
+                        ROS_WARN("Possible packet loss: %f to %f (%f)", (event_buffer_msg.events.back().ts - start_timestamp_).toSec(),
+                        (packet_ts_first - start_timestamp_).toSec(),
+                        std::fabs((event_buffer_msg.events.back().ts - packet_ts_first).toSec()));
                     }
 
                     // Define the message for a buffer of CD events

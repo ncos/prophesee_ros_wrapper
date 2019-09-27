@@ -14,6 +14,25 @@
 
 #include "log_tone_mapper.h"
 
+
+/*
+class LatencyFIFO {
+public:
+    std::list<prophesee_event_msgs::EventArray> event_msgs;
+    void add(prophesee_event_msgs::EventArray &arr) {
+        event_msgs.push_back(arr);
+    }
+
+    void  
+
+};
+
+
+*/
+
+
+
+
 /// \brief Main class for ROS publisher
 ///
 /// Publishes data from Prophesee sensor to ROS topics
