@@ -124,7 +124,6 @@ void PropheseeWrapperPublisher::startPublishing() {
     camera_.start();
     start_timestamp_ = ros::Time::now();
 
-    event_buffer_msg.events.reserve(2 * max_events);
     if (publish_cd_)
         publishCDEvents();
 
@@ -140,36 +139,49 @@ void PropheseeWrapperPublisher::startPublishing() {
         publishIMUEvents();
     }
 
+    prophesee_event_msgs::EventArray event_buffer_msg_copy;
+
     double last_ts = -1.0;
-    ros::Rate loop_rate(400);
+    ros::Rate loop_rate(30);
     while(ros::ok()) {
-        /*
         if (pub_info_.getNumSubscribers() > 0) {
             cam_info_msg_.header.stamp = ros::Time::now();
             pub_info_.publish(cam_info_msg_);
-        }*/
+        }
 
-        //if (pub_cd_events_.getNumSubscribers() > 0) 
+        //if (pub_cd_events_.getNumSubscribers() > 0)
         {
-            mtx.lock();
-            event_buffer_msg_copy.events = event_buffer_msg.events;
-            event_buffer_msg.events.clear();
-            mtx.unlock();
-
-            auto ecount = event_buffer_msg_copy.events.size();
-            if (ecount == 0) {
-                //ROS_WARN("About to publish an empty event buffer!");
+            event_buffer_msg_copy.events.clear();
+            if (event_fifo.size() == 0) {
+                event_fifo.swap();
                 continue;
             }
 
-            if (last_ts < 0 && ecount > 0) last_ts = (event_buffer_msg_copy.events.back().ts - start_timestamp_).toSec();
-            if (last_ts >= 0 && ecount > 0) {
-                auto ts = (event_buffer_msg_copy.events.front().ts - start_timestamp_).toSec();
-                if (std::fabs(ts - last_ts) > 0.01) {
-                    ROS_WARN("Possible packet loss (main loop): %f, %f, %f", last_ts, ts, std::fabs(ts - last_ts));
+            double last_packet_ts = -1.0;
+            for (auto &e : event_fifo) {
+                event_buffer_msg_copy.events.push_back(e);
+                double ts = (e.ts - start_timestamp_).toSec();
+
+                if (last_packet_ts > 0 && std::fabs(ts - last_packet_ts) > 0.01)
+                    ROS_WARN("\tPossible packet corruption (main loop): %f, %f, %f", last_packet_ts, ts, std::fabs(ts - last_packet_ts));
+
+                if (last_packet_ts < 0 && last_ts >= 0) {
+                    if (std::fabs(ts - last_ts) > 0.01) {
+                        ROS_WARN("Possible packet loss (main loop): %f, %f, %f", last_ts, ts, std::fabs(ts - last_ts));
+                    }
                 }
-                last_ts = (event_buffer_msg_copy.events.back().ts - start_timestamp_).toSec();
+
+                last_packet_ts = ts;
             }
+            event_fifo.clear();
+            event_fifo.swap();
+
+            auto ecount = event_buffer_msg_copy.events.size();
+            if (ecount == 0) {
+                continue;
+            }
+
+            last_ts = (event_buffer_msg_copy.events.back().ts - start_timestamp_).toSec();
 
             // Sensor geometry in header of the message
             event_buffer_msg_copy.height = camera_.geometry().height();
@@ -180,7 +192,7 @@ void PropheseeWrapperPublisher::startPublishing() {
 
             // Publish the message
             pub_cd_events_.publish(event_buffer_msg_copy);
-            //ROS_INFO("--%llu", event_buffer_msg_copy.events.size());
+            //ROS_INFO("Published--%llu", event_buffer_msg_copy.events.size());
         }
 
         loop_rate.sleep();
@@ -197,31 +209,42 @@ void PropheseeWrapperPublisher::publishCDEvents() {
                 //if (pub_cd_events_.getNumSubscribers() <= 0)
                 //    return;
 
-                mtx.lock();
+                //mtx.lock();
                 if (ev_begin < ev_end) {
+                    /*
                     auto packet_ts_first = ros::Time().fromNSec(start_timestamp_.toNSec() + (ev_begin->t * 1000.00));
                     if (event_buffer_msg.events.size() > 0 && std::fabs((event_buffer_msg.events.back().ts - packet_ts_first).toSec()) > 0.01) {
                         ROS_WARN("Possible packet loss: %f to %f (%f)", (event_buffer_msg.events.back().ts - start_timestamp_).toSec(),
                         (packet_ts_first - start_timestamp_).toSec(),
                         std::fabs((event_buffer_msg.events.back().ts - packet_ts_first).toSec()));
                     }
+                    */
+
+                    //std::vector<prophesee_event_msgs::Event> events;
+
 
                     // Define the message for a buffer of CD events
                     const unsigned int buffer_size = ev_end - ev_begin;
-                    auto last_size = event_buffer_msg.events.size();
-                    event_buffer_msg.events.resize(event_buffer_msg.events.size() + buffer_size);
+                    //auto last_size = event_buffer_msg.events.size();
+                    //events.resize(buffer_size);
+
+                    //event_buffer_msg.events.resize(event_buffer_msg.events.size() + buffer_size);
 
                     // Add events to the message
-                    auto buffer_it = event_buffer_msg.events.begin() + last_size;
-                    for (const Prophesee::EventCD *it = ev_begin; it != ev_end; ++it, ++buffer_it) {
-                        prophesee_event_msgs::Event &event = *buffer_it;
+                    //auto buffer_it = event_buffer_msg.events.begin() + last_size;
+                    //auto buffer_it = events.begin();
+                    for (const Prophesee::EventCD *it = ev_begin; it != ev_end; ++it) {
+                        prophesee_event_msgs::Event event;
                         event.x = it->x;
                         event.y = it->y;
                         event.polarity = it->p;
                         event.ts.fromNSec(start_timestamp_.toNSec() + (it->t * 1000.00));
+                        event_fifo.push(event);
                     }
+
+                    //event_fifo.push(events);
                 }
-                mtx.unlock();
+                //mtx.unlock();
 /*
                 auto current_ts = event_buffer_msg.events.back().ts.toSec();
                 if (event_buffer_msg.events.size() > max_events || current_ts - previous_ts > max_time) {

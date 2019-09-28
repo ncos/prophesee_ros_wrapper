@@ -12,7 +12,7 @@
     <param name="bias_file" value="" />
 
     <!-- Maximum event rate in kEv/s -->
-    <param name="max_event_rate" value="10000" />
+    <param name="max_event_rate" value="4000" />
 
     <!-- Graylevel frame rate in fps -->
     <param name="graylevel_frame_rate" value="30" />

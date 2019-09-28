@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(prophesee_ros_driver)
 
-## Compile as C++11, supported in ROS Kinetic and newer
-add_compile_options(-std=c++11)
+add_compile_options(-std=c++14)
 
 set(OpenCV_DIR /usr/share/OpenCV)
 find_package(catkin REQUIRED COMPONENTS

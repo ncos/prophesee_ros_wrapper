@@ -15,21 +15,50 @@
 #include "log_tone_mapper.h"
 
 
-/*
-class LatencyFIFO {
-public:
-    std::list<prophesee_event_msgs::EventArray> event_msgs;
-    void add(prophesee_event_msgs::EventArray &arr) {
-        event_msgs.push_back(arr);
+template <class T>
+class SwitchQueue {
+private:
+    std::mutex mtx;
+
+    std::vector<T> q[2];
+    int q_id = 0;
+
+    std::vector<T> *q_in;
+    std::vector<T> *q_out;
+
+    void set_ptrs() {
+        q_in = &(q[(q_id + 0) % 2]);
+        q_out = &(q[(q_id + 1) % 2]);
     }
 
-    void  
+public:
 
+    SwitchQueue() {
+        set_ptrs();
+        q_in->reserve(1000000);
+        q_out->reserve(1000000);
+    }
+
+    void push(T &d) {
+        mtx.lock();
+        q_in->push_back(d);
+        if (q_in->size() == q_in->capacity())
+            ROS_WARN("Vector capacity maxed out! %d", q_in->size());
+        mtx.unlock();
+    }
+
+    auto begin() {return q_out->begin(); }
+    auto end()   {return q_out->end(); }
+    auto size()  {return q_out->size(); }
+    void clear() {q_out->clear(); }
+
+    void swap() {
+        mtx.lock();
+        q_id = (q_id + 1) % 2;
+        set_ptrs();
+        mtx.unlock();
+    }
 };
-
-
-*/
-
 
 
 
@@ -118,12 +147,11 @@ private:
 
     static constexpr double GRAVITY = 9.81; /** Mean gravity value at Earth surface [m/s^2] **/
 
-    std::mutex mtx;
     int max_events = 10000;
     double max_time = 0.033;
     double previous_ts = 0.0;
-    prophesee_event_msgs::EventArray event_buffer_msg;
-    prophesee_event_msgs::EventArray event_buffer_msg_copy;
+
+    SwitchQueue<prophesee_event_msgs::Event> event_fifo;
 };
 
 #endif /* PROPHESEE_ROS_PUBLISHER_H_ */
