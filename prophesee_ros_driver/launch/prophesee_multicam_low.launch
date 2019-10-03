@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 
 <launch>
-  <arg name="bias_file" default="$(find prophesee_ros_driver)/launch/config/hf_60.bias"/>
+  <arg name="bias_file" default="$(find prophesee_ros_driver)/launch/config/low.bias"/>
 
   <include file="$(find prophesee_ros_driver)/launch/middle.launch">
     <arg name="bias_file" value="$(arg bias_file)" />
